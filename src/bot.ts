@@ -42,6 +42,19 @@ bot.command("orderbooks", async (ctx) => {
 	).join("\n"));
 });
 
+// Ensure /orderbooks triggers even with bot mention (e.g. /orderbooks@BotName) or when command parsing fails
+bot.hears(/^\/orderbooks(?:@\w+)?(?:\s+|$)/i, async (ctx) => {
+	const text = (ctx.message as any)?.text as string | undefined;
+	const [, eventId] = (text ?? "").split(/\s+/);
+	const ev = (await loadEvents()).find(e => e.id === eventId);
+	if (!ev) return ctx.reply("Unknown event");
+	const plans = await planAndFilter(ev.markets, Number(process.env.DEFAULT_BUDGET_USDC ?? 50));
+	return ctx.reply(plans.map(p => p.skip
+		? `❌ ${p.id} skipped (${p.skip})`
+		: `✅ ${p.id} depth ok | est spend $${(p.spent ?? 0).toFixed(2)} avg ${(p.avgPrice ?? 0).toFixed(3)}`
+	).join("\n"));
+});
+
 bot.command("buy", async (ctx) => {
 	const m = ctx.message.text.match(/\/buy\s+(\S+)(?:\s+(\d+))?(.*)/);
 	if (!m) return ctx.reply("Usage: /buy <eventId> [budget] [--dry]");
