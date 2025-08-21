@@ -1,0 +1,94 @@
+import { Telegraf } from "telegraf";
+import { loadEvents, linkMarket } from "./events.store.js";
+import { planAndFilter } from "./filters.js";
+import { getPending, setPending, clearPending } from "./security/pending.js";
+import { audit } from "./security/audit.js";
+import { executeBuys } from "./pmClient.js";
+
+const token = process.env.TELEGRAM_BOT_TOKEN!;
+export const bot = new Telegraf(token);
+
+bot.command("events", async (ctx) => {
+	const evts = await loadEvents();
+	if (!evts.length) return ctx.reply("No events defined.");
+	ctx.reply(evts.map(e => `• ${e.id}: ${e.name} (${e.markets.length} markets)`).join("\n"));
+});
+
+bot.command("link", async (ctx) => {
+	const [, eventId, marketId] = ctx.message.text.split(/\s+/);
+	if (!eventId || !marketId) return ctx.reply("Usage: /link <eventId> <marketId>");
+	await linkMarket(eventId, marketId);
+	ctx.reply(`Linked ${marketId} to ${eventId}`);
+});
+
+bot.command("orderbooks", async (ctx) => {
+	const [, eventId] = ctx.message.text.split(/\s+/);
+	const ev = (await loadEvents()).find(e => e.id === eventId);
+	if (!ev) return ctx.reply("Unknown event");
+	const plans = await planAndFilter(ev.markets, Number(process.env.DEFAULT_BUDGET_USDC ?? 50));
+	ctx.reply(plans.map(p => p.skip
+		? `❌ ${p.id} skipped (${p.skip})`
+		: `✅ ${p.id} depth ok | est spend $${(p.spent ?? 0).toFixed(2)} avg ${(p.avgPrice ?? 0).toFixed(3)}`
+	).join("\n"));
+});
+
+bot.command("buy", async (ctx) => {
+	const m = ctx.message.text.match(/\/buy\s+(\S+)(?:\s+(\d+))?(.*)/);
+	if (!m) return ctx.reply("Usage: /buy <eventId> [budget] [--dry]");
+	const [, eventId, budgetRaw, flags] = m;
+	const dry = flags?.includes("--dry") ?? true;
+	const budget = Number(budgetRaw ?? process.env.DEFAULT_BUDGET_USDC ?? 50);
+
+	const cap = Number(process.env.MAX_BUDGET_PER_BUY ?? 200);
+	if (budget > cap) { await ctx.reply(`Budget exceeds cap (${cap}).`); return; }
+
+	const ev = (await loadEvents()).find(e => e.id === eventId);
+	if (!ev) return ctx.reply("Unknown event");
+
+	const plans = await planAndFilter(ev.markets, budget, ev.buyRules);
+	const buyable = plans.filter((p: any) => !p.skip);
+	if (!buyable.length) {
+		audit({ kind: "buy_plan", outcome: "SKIPPED", chat: ctx.chat?.id, user: ctx.from?.id, username: ctx.from?.username, budget, reason: "no_buyable" });
+		return ctx.reply("Nothing passes filters.");
+	}
+
+	const safeMode = String(process.env.SAFE_MODE ?? "true").toLowerCase() === "true";
+	const planSummary = buyable.map((p: any) => ({ id: p.id, spent: p.spent })).slice(0, Number(process.env.MAX_MARKETS_PER_BUY ?? 10));
+
+	setPending(ctx.chat!.id as number, { buyable: planSummary, budget, eventId });
+	const baseMsg = "PLAN:\n" + planSummary.map((p: any) => `→ ${p.id} ~$${(p.spent ?? 0).toFixed(2)}`).join("\n");
+	if (safeMode || dry) {
+		audit({ kind: "buy_plan", outcome: "DRY", chat: ctx.chat?.id, user: ctx.from?.id, username: ctx.from?.username, budget, planSummary });
+		return ctx.reply(baseMsg + "\nPending confirm.");
+	}
+
+	// Not safe mode and not dry: execute immediately
+	try {
+		const res = await executeBuys(planSummary.map(({ id, spent }: any) => ({ id, spent })));
+		audit({ kind: "buy_execute", outcome: "EXECUTED", chat: ctx.chat?.id, user: ctx.from?.id, username: ctx.from?.username, budget, totals: { markets: planSummary.length, spent: planSummary.reduce((a: number, b: any) => a + (b.spent ?? 0), 0) } });
+		return ctx.reply("Executed.");
+	} catch (e: any) {
+		audit({ kind: "buy_execute", outcome: "ERROR", chat: ctx.chat?.id, user: ctx.from?.id, username: ctx.from?.username, error: String(e?.message ?? e) });
+		return ctx.reply("Execution failed.");
+	}
+});
+
+bot.command("confirm", async (ctx) => {
+	const plan: any = getPending(ctx.chat!.id as number);
+	if (!plan) return ctx.reply("No pending plan.");
+	clearPending(ctx.chat!.id as number);
+	try {
+		const res = await executeBuys(plan.buyable.map(({ id, spent }: any) => ({ id, spent })));
+		audit({ kind: "buy_execute", outcome: "EXECUTED", chat: ctx.chat?.id, user: ctx.from?.id, username: ctx.from?.username, totals: { markets: plan.buyable.length, spent: plan.buyable.reduce((a: number, b: any) => a + (b.spent ?? 0), 0) } });
+		return ctx.reply("Executed.");
+	} catch (e: any) {
+		audit({ kind: "buy_execute", outcome: "ERROR", chat: ctx.chat?.id, user: ctx.from?.id, username: ctx.from?.username, error: String(e?.message ?? e) });
+		return ctx.reply("Execution failed.");
+	}
+});
+
+bot.command("cancel", async (ctx) => {
+	clearPending(ctx.chat!.id as number);
+	audit({ kind: "buy_cancel", chat: ctx.chat?.id, user: ctx.from?.id, username: ctx.from?.username });
+	return ctx.reply("Canceled.");
+});

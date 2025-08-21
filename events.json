@@ -1,0 +1,5 @@
+[
+    { "id": "peace_ua_ru", "name": "Peace deal Ukraine–Russia", "markets": [], "buyRules": { "minLiquidity": 200, "maxSpread": 0.02 } },
+    { "id": "ceasefire_il_gaza", "name": "Israel–Gaza ceasefire", "markets": [], "buyRules": { "minLiquidity": 150, "maxSpread": 0.03 } }
+  ]
+  
