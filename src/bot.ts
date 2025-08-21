@@ -8,6 +8,16 @@ import { executeBuys } from "./pmClient.js";
 const token = process.env.TELEGRAM_BOT_TOKEN!;
 export const bot = new Telegraf(token);
 
+bot.catch(async (err, ctx) => {
+	console.error("Bot handler error:", err);
+	try { await ctx.reply("Error processing command."); } catch {}
+});
+
+bot.command("whoami", async (ctx) => {
+	const username = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name ?? "");
+	return ctx.reply(`chat_id=${ctx.chat?.id}\nuser_id=${ctx.from?.id}\nusername=${username}`);
+});
+
 bot.command("events", async (ctx) => {
 	const evts = await loadEvents();
 	if (!evts.length) return ctx.reply("No events defined.");
@@ -91,4 +101,27 @@ bot.command("cancel", async (ctx) => {
 	clearPending(ctx.chat!.id as number);
 	audit({ kind: "buy_cancel", chat: ctx.chat?.id, user: ctx.from?.id, username: ctx.from?.username });
 	return ctx.reply("Canceled.");
+});
+
+bot.command("help", async (ctx) => {
+	return ctx.reply([
+		"/whoami — show chat/user ids",
+		"/events — list events",
+		"/link <eventId> <marketId> — link event to market",
+		"/orderbooks <eventId> — show depth for an event",
+		"/buy <eventId> [budget] [--dry] — plan a buy",
+		"/confirm — execute last plan",
+		"/cancel — discard last plan",
+		"/ping — liveness"
+	].join("\n"));
+});
+
+bot.command("ping", async (ctx) => ctx.reply("pong"));
+
+// Unknown command fallback: reply help for slash-commands
+bot.on("text", async (ctx) => {
+	const text = (ctx.message as any)?.text as string | undefined;
+	if (text && text.startsWith("/")) {
+		return ctx.reply("Unknown command. Try /help");
+	}
 });
