@@ -1,5 +1,6 @@
 [
-    { "id": "peace_ua_ru", "name": "Peace deal Ukraine–Russia", "markets": [], "buyRules": { "minLiquidity": 200, "maxSpread": 0.02 } },
-    { "id": "ceasefire_il_gaza", "name": "Israel–Gaza ceasefire", "markets": [], "buyRules": { "minLiquidity": 150, "maxSpread": 0.03 } }
+    { "id": "putin_zelenskky_meeting_confirmed", "name": "Putin Zelensky meeting confirmed", "markets": [], "buyRules": { "minLiquidity": 200, "maxSpread": 0.02 } },
+    { "id": "israel_approve_ceasefire_proposal", "name": "Israel approve ceasefire proposal", "markets": [], "buyRules": { "minLiquidity": 150, "maxSpread": 0.03 } },
+    { "id": "russia_ukraine_ceasefire_agreement", "name": "Russia Ukraine ceasefire agreement", "markets": [], "buyRules": { "minLiquidity": 150, "maxSpread": 0.03 } }
   ]
   
